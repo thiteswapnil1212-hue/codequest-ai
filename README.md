@@ -2,6 +2,8 @@
 
 **Learn Python by solving missions, with a mentor that explains — not just grades.**
 
+Live demo (team deployment): https://codequest-xi-eight.vercel.app
+
 CodeQuest AI (original project name: Vortexa) is a guided Python learning workspace. Learners pick a coding mission, write Python in the browser, run it against public tests, and get progressive, rule-based mentor hints when they get stuck. Trusted grading and saved progress are optional and need a server setup.
 
 ## What it does
