@@ -115,6 +115,20 @@ npm run build
 - The run route uses an in-memory sliding-window limit (5 requests per minute per verified learner; 20 per minute in one shared anonymous bucket). This is process-local and is not globally consistent across serverless instances or restarts. Configure an upstream/shared rate limiter at deployment for production-wide abuse protection.
 - No hidden tests or server credentials are sent to Pyodide. Only public test inputs/expected values are supplied by the public-test endpoint.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    Learner([Learner]) --> App["Next.js App<br/>missions · arena · dashboard"]
+    App --> Catalog["Mission catalog<br/>src/lib/missions.ts · 23 missions"]
+    App --> Editor["Monaco editor<br/>/arena/[missionId]"]
+    Editor --> Pyodide["Pyodide Web Worker<br/>local Python · public tests"]
+    Editor --> Judge0["Judge0 server<br/>trusted Submit · public + hidden tests"]
+    App --> Mentor["Rule-based mentor<br/>evidence-based hints · no LLM"]
+    App --> API["API routes<br/>/api/missions/tests · auth"]
+    API --> Supabase["Supabase<br/>auth + owner-scoped progress"]
+```
+
 ## Project structure
 
 ```text
