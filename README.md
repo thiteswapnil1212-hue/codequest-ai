@@ -6,6 +6,12 @@ Live demo (team deployment): https://codequest-xi-eight.vercel.app
 
 CodeQuest AI (original project name: Vortexa) is a guided Python learning workspace. Learners pick a coding mission, write Python in the browser, run it against public tests, and get progressive, rule-based mentor hints when they get stuck. Trusted grading and saved progress are optional and need a server setup.
 
+## Screenshots
+
+![CodeQuest AI arena — Sum of Two Numbers mission](docs/screenshots/arena.png)
+
+Mission workspace — 'Sum of Two Numbers' with the problem statement, public examples, and the Local Python / Live Judge0 toggle. Screenshot of the live demo, 20 Nov 2026.
+
 ## What it does
 
 - **Mission catalog:** 23 authored missions in `src/lib/missions.ts` — 9 Beginner, 13 Intermediate, 1 Advanced, about 6 hours of estimated practice in total. Each mission has a stable ID/slug, topic, category, concepts, duration, constraints, examples, starter code, and non-solution hint metadata.
@@ -107,6 +113,100 @@ flowchart LR
 - **Server:** the API routes serve public tests, run bounded execution, generate progressive hints, and own all progress writes. Hidden tests never leave the server.
 - **Supabase (optional):** authentication plus owner-scoped reads of attempts, completions, and mistake summaries. Writes are server-only (`service_role`, migration `002_server_owned_progress.sql`); the browser never writes progress directly.
 - **Judge0 (optional):** the only trusted grading path. A completion is saved only when a trusted Judge0 Submit passes all required tests.
+
+## Database (Supabase)
+
+Four tables, all defined in `supabase/migrations/` (`001_phase3_persistence.sql`, `002_server_owned_progress.sql`, `003_adaptive_learner_intelligence.sql`). Every table has row level security enabled.
+
+```mermaid
+erDiagram
+    auth_users {
+        uuid id PK
+    }
+    learners {
+        uuid id PK
+        text email
+        text display_name
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    mission_attempts {
+        uuid id PK
+        uuid learner_id FK
+        text mission_id
+        text mode
+        text execution_status
+        int passed_tests
+        int total_tests
+        int hint_level
+        text mistake_category
+        text execution_source
+        text mistake_concept
+        text mistake_confidence
+        jsonb mistake_evidence
+        text submission_id
+        boolean completed
+        timestamptz created_at
+    }
+    mission_completions {
+        uuid learner_id PK
+        text mission_id PK
+        uuid attempt_id FK
+        int passed_tests
+        int total_tests
+        timestamptz completed_at
+    }
+    learner_mistakes {
+        uuid id PK
+        uuid learner_id FK
+        text mission_id
+        text category
+        text concept
+        jsonb evidence
+        int occurrence_count
+        timestamptz last_seen_at
+    }
+    auth_users ||--|| learners : "creates via handle_new_learner trigger"
+    learners ||--o{ mission_attempts : "has"
+    learners ||--o{ mission_completions : "has"
+    learners ||--o{ learner_mistakes : "has"
+    mission_attempts ||--o| mission_completions : "attempt_id, nullable"
+```
+
+- `learners.id` references `auth.users(id)`; the `handle_new_learner()` trigger creates a learner row on every sign-up.
+- `mode` is `run` or `submit`; `execution_status` is one of `passed`, `wrong_answer`, `syntax_error`, `runtime_error`, `timeout`, `infrastructure_error`; `execution_source` is `local` or `live`; `mistake_confidence` is `high`, `medium`, or `low`.
+- `mission_completions` has a composite primary key (`learner_id`, `mission_id`) — one completion row per learner per mission. `attempt_id` is nullable and set to null when the attempt is deleted.
+- `learner_mistakes` has a unique constraint on (`learner_id`, `mission_id`, `category`); `mission_attempts` has a unique index on (`learner_id`, `submission_id`) where `submission_id` is not null.
+- Access rule (migration `002`): browser roles can only SELECT their own rows. All writes to attempts, completions, and mistake summaries go through the server-only `service_role` — the browser never writes progress directly.
+
+## Deployment — where each piece runs
+
+```mermaid
+flowchart TB
+    subgraph Browser["Learner's browser"]
+        UI["Next.js pages<br/>missions · arena · dashboard"]
+        Worker["Pyodide Web Worker<br/>local Python · public tests only"]
+    end
+    subgraph Vercel["Vercel — codequest-xi-eight.vercel.app"]
+        API["Next.js API routes (serverless)<br/>/api/missions · /api/run · /api/hint<br/>/api/progress · /api/auth"]
+        Catalog["Mission catalog<br/>src/lib/missions.ts · 23 missions"]
+    end
+    CDN["jsDelivr CDN<br/>Pyodide 0.29.5 runtime + stdlib"]
+    Judge0["Judge0 server (optional)<br/>trusted Submit · public + hidden tests"]
+    Supabase["Supabase (optional)<br/>Postgres + Auth · RLS"]
+    UI --> API
+    UI --> Worker
+    Worker --> CDN
+    API --> Catalog
+    API --> Judge0
+    API --> Supabase
+```
+
+- **Vercel** hosts the Next.js app (team deployment at `codequest-xi-eight.vercel.app`); the API routes run as serverless functions.
+- **jsDelivr CDN** serves the Pyodide 0.29.5 runtime and standard library (`cdn.jsdelivr.net/pyodide/v0.29.5/full/`). The first local run downloads it; later runs use the cache.
+- **Judge0** is optional and external — self-hosted or a compatible provider. The app appends `/submissions` to `JUDGE0_API_URL` and uses Python language id `71` by default.
+- **Supabase** is optional — Postgres plus Auth. Without it the app is local practice only; no progress is saved anywhere.
+- The run route's in-memory rate limit is process-local and does not hold across serverless instances or restarts (see Security notes).
 
 ## API
 
