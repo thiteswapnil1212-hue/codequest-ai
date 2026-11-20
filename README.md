@@ -8,7 +8,7 @@ CodeQuest AI (original project name: Vortexa) is a guided Python learning worksp
 
 ## What it does
 
-- **Mission catalog:** 23 authored missions in `src/lib/missions.ts`. Each mission has a stable ID/slug, topic, constraints, examples, starter code, and non-solution hint metadata.
+- **Mission catalog:** 23 authored missions in `src/lib/missions.ts` — 9 Beginner, 13 Intermediate, 1 Advanced, about 6 hours of estimated practice in total. Each mission has a stable ID/slug, topic, category, concepts, duration, constraints, examples, starter code, and non-solution hint metadata.
 - **Coding arena:** a Monaco-based editor at `/arena/[missionId]`, with per-test verdicts, a dashboard, and a missions list at `/missions`.
 - **Local Python execution:** Run executes real Python in the browser with Pyodide in a Web Worker — no server or account needed for practice.
 - **Trusted Submit:** Submit runs the full public + hidden suite on a configured Judge0 server and only saves a completion when the trusted result passes. Without Judge0 configured, Submit shows an actionable configuration message and never reports false success.
@@ -16,7 +16,31 @@ CodeQuest AI (original project name: Vortexa) is a guided Python learning worksp
 - **Adaptive learner:** learner patterns and progress are tracked from attempts, with empty states on the dashboard until real data exists.
 - **Accounts (optional):** Supabase email sign-in/sign-up with owner-scoped saved progress. Local practice works without it.
 
-Mission drafts under `missions/drafts/` and `Pankaj mission/drafts/` are not automatically promoted into the canonical catalog.
+Mission drafts under `missions/drafts/` and `Pankaj mission/drafts/` are team drafts and are not automatically promoted into the canonical catalog.
+
+## How a mission attempt works
+
+```mermaid
+sequenceDiagram
+    actor Learner
+    participant Arena as Arena /arena/[missionId]
+    participant Editor as Monaco editor
+    participant Worker as Pyodide Web Worker
+    participant Judge0 as Judge0 server (optional)
+    participant Mentor as Rule-based mentor
+    participant DB as Supabase (optional)
+
+    Learner->>Arena: Pick a mission
+    Arena->>Arena: Load mission (starter code, examples, public tests)
+    Learner->>Editor: Write Python
+    Editor->>Worker: Run — public tests only
+    Worker-->>Editor: Per-test verdicts
+    Editor->>Judge0: Submit — public + hidden tests (only if configured)
+    Judge0-->>Editor: Trusted verdict
+    Editor->>Mentor: Stuck? Request a hint
+    Mentor-->>Editor: Progressive hint (concept nudge first, stronger guidance later)
+    Editor->>DB: Save completion (only on trusted Judge0 pass, signed in)
+```
 
 ## Run vs. Submit — read this first
 
@@ -32,14 +56,83 @@ Local mode is genuine Python execution, but the browser worker is not a server-s
 
 The execution contract is discriminated by format:
 
-- `function` — invokes the configured Python function with JSON-compatible test arguments and compares its returned value.
-- `stdin_stdout` — supplies text through standard input and compares the program's captured standard output exactly.
+- `function` — invokes the configured Python function with JSON-compatible test arguments and compares its returned value. 22 of the 23 missions use this format.
+- `stdin_stdout` — supplies text through standard input and compares the program's captured standard output exactly. 1 mission (`count-input-lines`) uses this format.
 
 Public tests are returned by `GET /api/missions/tests` for local browser execution. Private cases stay in the server-only test catalog and are used only for a configured Live Judge0 Submit.
 
+## Mission catalog
+
+All 23 missions, exactly as defined in `src/lib/missions.ts`. Times are the per-mission estimates stored with each mission (373 minutes total, about 6 hours).
+
+| Mission | Difficulty | Category | Time |
+| --- | --- | --- | --- |
+| Sum of Two Numbers | Beginner | Fundamentals | 8 min |
+| Even or Odd | Beginner | Conditionals | 10 min |
+| Sum from 1 to N | Beginner | Loops | 12 min |
+| Find the Largest Number | Beginner | Arrays | 15 min |
+| Count Vowels | Beginner | Strings | 14 min |
+| Factorial Number | Beginner | Loops | 12 min |
+| Palindrome Check | Beginner | Strings | 12 min |
+| Reverse String | Beginner | Strings | 10 min |
+| Count Input Lines | Beginner | Input / Output | 12 min |
+| Largest of Three | Intermediate | Conditionals | 14 min |
+| Two Sum | Intermediate | Arrays | 20 min |
+| Second Largest Number | Intermediate | Arrays | 18 min |
+| Binary Search | Intermediate | Searching & Sorting | 18 min |
+| Sort Numbers | Intermediate | Searching & Sorting | 20 min |
+| Recursive Factorial | Intermediate | Recursion | 16 min |
+| Character Frequency | Intermediate | Hash Maps | 16 min |
+| Balanced Brackets | Intermediate | Stacks & Queues | 18 min |
+| Queue Operations | Intermediate | Stacks & Queues | 20 min |
+| Linked List Cycle | Intermediate | Linked Lists | 20 min |
+| Maximum Tree Depth | Intermediate | Trees | 18 min |
+| Graph Reachability | Intermediate | Graphs | 22 min |
+| Fibonacci with Memoization | Intermediate | Dynamic Programming | 18 min |
+| Longest Substring | Advanced | Strings | 30 min |
+
+## Data flow — where things live
+
+```mermaid
+flowchart LR
+    Learner([Learner]) --> Browser["Browser<br/>Monaco editor · Pyodide worker<br/>public tests only"]
+    Browser --> API["Next.js API routes<br/>/api/missions · /api/run<br/>/api/hint · /api/progress · /api/auth"]
+    API --> Catalog["Mission catalog<br/>src/lib/missions.ts · 23 missions"]
+    API --> Judge0["Judge0 server (optional)<br/>trusted Submit · public + hidden tests"]
+    API --> Supabase["Supabase (optional)<br/>auth + owner-scoped progress"]
+    Browser --> Local["Browser only<br/>practice patterns<br/>no account needed"]
+```
+
+- **Browser:** the editor, the Pyodide worker, and local practice patterns. Recurring-mistake review works without an account and stays in the browser.
+- **Server:** the API routes serve public tests, run bounded execution, generate progressive hints, and own all progress writes. Hidden tests never leave the server.
+- **Supabase (optional):** authentication plus owner-scoped reads of attempts, completions, and mistake summaries. Writes are server-only (`service_role`, migration `002_server_owned_progress.sql`); the browser never writes progress directly.
+- **Judge0 (optional):** the only trusted grading path. A completion is saved only when a trusted Judge0 Submit passes all required tests.
+
+## API
+
+| Route | Method | Purpose |
+| --- | --- | --- |
+| `/api/missions` | GET | List the mission catalog |
+| `/api/missions/[id]` | GET | One mission by ID |
+| `/api/missions/tests` | GET | Public tests for local browser execution |
+| `/api/run` | POST | Bounded code execution (128 KiB total, 64 KiB source, 8 s per test, 30 s deadline) |
+| `/api/hint` | POST | Progressive, rule-based mentor hints |
+| `/api/progress` | GET | Saved progress (authenticated, owner-scoped) |
+| `/api/auth/sign-up` | POST | Supabase email sign-up |
+| `/api/auth/sign-in` | POST | Supabase email sign-in |
+
 ## Tech stack
 
-Next.js 16, React 19, TypeScript, Tailwind CSS, Monaco Editor, Pyodide, Supabase (optional), Judge0 (optional), Vitest. See `package.json` for the full list.
+| Layer | Choice |
+| --- | --- |
+| Framework | Next.js 16.4.0 (App Router) · React 19.3.0 · TypeScript 5 |
+| Styling | Tailwind CSS v4 · `@tailwindcss/turbopack` |
+| Editor | Monaco Editor (`@monaco-editor/react` 4.7.0) |
+| Python runtime | Pyodide 0.29.5 (Web Worker, jsDelivr CDN) |
+| Trusted grading | Judge0 (optional, self-hosted or compatible provider) |
+| Accounts + data | Supabase (`@supabase/supabase-js` 2.117.3, optional) |
+| Landing visual | Spline (`@splinetool/react-spline` 4.1.0) |
+| Tests | Vitest 2.1.8 (`npm test`) · ESLint 9 (`npm run lint`) |
 
 ## Quick start — local practice, no account needed
 
@@ -64,7 +157,7 @@ On Windows PowerShell, use `Copy-Item .env.example .env.local` instead of `cp`. 
 ### Supabase project setup
 
 1. Create a Supabase project.
-2. Apply all migrations in `supabase/migrations/` in order, including `002_server_owned_progress.sql`. This migration removes browser writes to attempts, completions, and mistake summaries, retaining authenticated owner-scoped reads while reserving writes for the server-only `service_role`.
+2. Apply all migrations in `supabase/migrations/` in order (`001_phase3_persistence.sql`, `002_server_owned_progress.sql`, `003_adaptive_learner_intelligence.sql`). Migration `002` removes browser writes to attempts, completions, and mistake summaries, retaining authenticated owner-scoped reads while reserving writes for the server-only `service_role`.
 3. Enable email auth in Supabase Authentication if you want password sign-in and sign-up.
 4. Keep the server-side keys in local environment variables only.
 
@@ -132,12 +225,26 @@ flowchart LR
 ## Project structure
 
 ```text
-src/app/            Pages (missions, arena, dashboard, auth) and API routes
-src/components/     Arena workspace, editor, mentor panel, mission grid, dashboard
-src/lib/            Mission catalog, mentor, adaptive learner, execution, Judge0 client
-supabase/           SQL migrations for accounts and saved progress
-missions/drafts/    Mission drafts, not yet in the canonical catalog
+src/app/            Pages (missions, arena/[missionId], dashboard, auth) and API routes (auth, missions, run, hint, progress)
+src/components/     ArenaWorkspace, CodeEditor, MentorPanel, MissionGrid, MissionCard, TestResults,
+                    SplineScene, LearnerProgressDashboard, AdaptiveLearnerSection, LocalPatternsSection,
+                    AuthWidget, Navbar
+src/lib/            Mission catalog, mentor evidence, adaptive learner, Pyodide runner, local Python,
+                    execution client, Judge0 client, rate limit, Supabase
+supabase/           3 SQL migrations (001 persistence, 002 server-owned progress, 003 adaptive learner)
+missions/drafts/    Team mission drafts — not in the canonical catalog
 ```
+
+Tests: 18 test files across `src/lib` (12), `src/app/api` (5), and `src/components` (1). Run them with `npm test` (Vitest).
+
+## Honest limits
+
+- **No LLM anywhere.** The mentor is rule-based (`mistakePatterns` + progressive hint levels). It classifies the mistake and nudges; it never writes or reveals the solution.
+- **No trusted grading without Judge0.** Local Submit only checks public tests in the browser. A completion is saved only on a trusted Judge0 pass.
+- **No accounts without Supabase.** Progress, attempts, and completions need a configured Supabase project; without it the app is local practice only.
+- **Browser Python is standard library only.** Third-party packages and native extensions are not supported by the Pyodide runtime, and hidden-test grading is never done in the browser.
+- **Rate limits are process-local.** The run route's sliding-window limit does not hold across serverless instances or restarts.
+- **Drafts are not missions.** Files under `missions/drafts/` and `Pankaj mission/drafts/` are team working drafts; only the 23 missions in `src/lib/missions.ts` are the catalog.
 
 ## Team
 
